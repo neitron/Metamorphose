@@ -1,4 +1,4 @@
-﻿using System.Collections;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -8,13 +8,113 @@ public class Metamorphose : MonoBehaviour
 {
 
 
+	#region Private Classes
+
+	private class Polygon
+	{
+
+
+		public Vector4[] vertices { get; }
+		public Vector4[] normals { get; }
+		public Vector4[] uvs { get; }
+
+
+		public Matrix4x4 localToWorld { get; set; }
+
+
+
+		public Polygon(Vector4[] vertices, Vector4[] normals, Vector4[] uvs, Matrix4x4 localToWorld)
+		{
+			this.vertices = vertices;
+			this.normals = normals;
+			this.uvs = uvs;
+
+			this.localToWorld = localToWorld;
+		}
+
+		
+		public void calcWorldVerticies(MeshData mesh, int t0, int t1, int t2)
+		{
+			vertices[0] = localToWorld.MultiplyPoint3x4(mesh.vertices[mesh.triangles[t0]]);
+			vertices[1] = localToWorld.MultiplyPoint3x4(mesh.vertices[mesh.triangles[t1]]);
+			vertices[2] = localToWorld.MultiplyPoint3x4(mesh.vertices[mesh.triangles[t2]]);
+		}
+
+
+		public void calcWorldNormals(MeshData mesh, int t0, int t1, int t2)
+		{
+			normals[0] = localToWorld.MultiplyVector(mesh.normals[mesh.triangles[t0]]);
+			normals[1] = localToWorld.MultiplyVector(mesh.normals[mesh.triangles[t1]]);
+			normals[2] = localToWorld.MultiplyVector(mesh.normals[mesh.triangles[t2]]);
+			normals[3] = (normals[0] + normals[1] + normals[2]).normalized;		// Polygon face's normal
+		}
+
+
+		public void calcUVs(MeshData mesh, int t0, int t1, int t2)
+		{
+			uvs[0] = mesh.uvs[mesh.triangles[t0]];
+			uvs[1] = mesh.uvs[mesh.triangles[t1]];
+			uvs[2] = mesh.uvs[mesh.triangles[t2]];
+		}
+
+
+	}
+
+
+	private class MeshData
+	{
+
+
+		public Vector3[] vertices { get; }
+		public Vector3[] normals { get; }
+		public Vector2[] uvs { get; }
+		public int[] triangles { get; }
+
+
+
+		public MeshData(Vector3[] vertices, Vector3[] normals, Vector2[] uvs, int[] triangles)
+		{
+			this.vertices = vertices;
+			this.normals = normals;
+			this.uvs = uvs;
+			this.triangles = triangles;
+		}
+
+
+	}
+
+	#endregion
+
 	#region Unity properties
 
-	[SerializeField] private Mesh _mesh;
-	[SerializeField] private Mesh _meshTarget;
-	[SerializeField] private Transform _originalInstance;
-	[SerializeField, Range(0.001f, 1.0f)] private float _instanceScale;
-	[SerializeField] private float _physicsTimeDelay;
+	[SerializeField] private Transform _origin;
+	[SerializeField] private Transform _target;
+	//[SerializeField] private Transform _instanceOriginal;
+	[SerializeField] private Material _material;
+	[SerializeField, Range(0.0f, 1.0f)] private float _metamorphoseLevel;
+
+	#endregion
+
+	#region Private fields
+
+	private MaterialPropertyBlock _propertyBlock;
+	private List<MeshRenderer> _instances;
+	private MeshData _originMeshData;
+	private MeshData _targetMeshData;
+	private Polygon[] _originPolygons;
+	private Polygon[] _targetPolygons;
+
+	private Matrix4x4 _polyPositionsData;
+	private Matrix4x4 _polyNormalsData;
+	private Matrix4x4 _polyUvsData;
+
+	private int _vertexPositionsShaderPropertyId;
+	private int _vertexNormalsShaderPropertyId;
+	private int _vertexUvShaderPropertyId;
+	private int _metamorphoseLevelShaderPropertyId;
+
+	private float _metamorphoseLevelPrev;
+	private Vector4 _interpolationBuffer;
 
 	#endregion
 
@@ -22,24 +122,156 @@ public class Metamorphose : MonoBehaviour
 
 	private void Start () 
 	{
-		//spawn();
+		_propertyBlock = new MaterialPropertyBlock();
+		_instances = new List<MeshRenderer>();
+
+		_vertexPositionsShaderPropertyId = Shader.PropertyToID("_VertexPositions");
+		_vertexNormalsShaderPropertyId = Shader.PropertyToID("_VertexNormals");
+		_vertexUvShaderPropertyId = Shader.PropertyToID("_VertexUV");
+		_metamorphoseLevelShaderPropertyId = Shader.PropertyToID("_MetamorphoseLevel");
+
+		_metamorphoseLevelPrev = _metamorphoseLevel + 0.1f;
+
 		spawnPolies();
 	}
-	
 
+
+	private void Update()
+	{
+		updatePolies();
+	}
+
+
+	private void updatePolies()
+	{
+		if (Math.Abs(_metamorphoseLevel - _metamorphoseLevelPrev) < 0.0001f)
+		{
+			return;
+		}
+
+		_material.SetFloat(_metamorphoseLevelShaderPropertyId, _metamorphoseLevel);
+
+		for (int instId = 0; instId < _instances.Count; instId++)
+		{
+			//_originPolygons[instId % _originPolygons.Length].localToWorld = _origin.localToWorldMatrix;
+			//_targetPolygons[instId % _targetPolygons.Length].localToWorld = _target.localToWorldMatrix;
+			// Set Position data
+			Vector4[] buffer0 = _originPolygons[instId % _originPolygons.Length].vertices;
+			Vector4[] buffer1 = _targetPolygons[instId % _targetPolygons.Length].vertices;
+			
+			Vector4 v = lerp(buffer0[0], buffer1[0], _metamorphoseLevel);
+			_polyPositionsData.m00 = v.x;
+			_polyPositionsData.m10 = v.y;
+			_polyPositionsData.m20 = v.z;
+			//_polyPositionsData[3] = 0.0f;
+
+			v = lerp(buffer0[1], buffer1[1], _metamorphoseLevel);
+			_polyPositionsData.m01 = v.x;
+			_polyPositionsData.m11 = v.y;
+			_polyPositionsData.m21 = v.z;
+			//_polyPositionsData[7] = 0.0f;
+
+			v = lerp(buffer0[2], buffer1[2], _metamorphoseLevel);
+			_polyPositionsData.m02 = v.x;
+			_polyPositionsData.m12 = v.y;
+			_polyPositionsData.m22 = v.z;
+			//_polyPositionsData[11] = 0.0f;
+
+			//_polyPositionsData[12] = 0.0f;
+			//_polyPositionsData[13] = 0.0f;
+			//_polyPositionsData[14] = 0.0f;
+			//_polyPositionsData[15] = 0.0f;
+
+			// Set normals data
+			buffer0 = _originPolygons[instId % _originPolygons.Length].normals;
+			buffer1 = _targetPolygons[instId % _targetPolygons.Length].normals;
+
+			v = lerp(buffer0[0], buffer1[0], _metamorphoseLevel);
+			_polyNormalsData.m00  = v.x;
+			_polyNormalsData.m10  = v.y;
+			_polyNormalsData.m20  = v.z;
+			//_polyNormalsData[3]  = 0.0f;
+
+			v = lerp(buffer0[1], buffer1[1], _metamorphoseLevel);
+			_polyNormalsData.m01  = v.x;
+			_polyNormalsData.m11  = v.y;
+			_polyNormalsData.m21  = v.z;
+			//_polyNormalsData[7]  = 0.0f;
+
+			v = lerp(buffer0[2], buffer1[2], _metamorphoseLevel);
+			_polyNormalsData.m02 = v.x;
+			_polyNormalsData.m12 = v.y;
+			_polyNormalsData.m22 = v.z;
+			//_polyNormalsData[11] = 0.0f;
+
+			v = lerp(buffer0[3], buffer1[3], _metamorphoseLevel);
+			_polyNormalsData.m03 = v.x;
+			_polyNormalsData.m13 = v.y;
+			_polyNormalsData.m23 = v.z;
+			//_polyNormalsData[15] = 0.0f;
+
+			// Set UVs data
+			buffer0 = _originPolygons[instId % _originPolygons.Length].uvs;
+			buffer1 = _targetPolygons[instId % _targetPolygons.Length].uvs;
+
+			v = lerp(buffer0[0], buffer1[0], _metamorphoseLevel);
+			_polyUvsData.m00  = v.x;
+			_polyUvsData.m10  = v.y;
+			//_polyUvsDa.m02ta[2]  = 0.0f;
+			//_polyUvsData[3]  = 0.0f;
+
+			v = lerp(buffer0[1], buffer1[1], _metamorphoseLevel);
+			_polyUvsData.m01  = v.x;
+			_polyUvsData.m11  = v.y;
+			//_polyUvsDa.m02ta[6]  = 0.0f;
+			//_polyUvsData[7]  = 0.0f;
+
+			v = lerp(buffer0[2], buffer1[2], _metamorphoseLevel);
+			_polyUvsData.m02  = v.x;
+			_polyUvsData.m12  = v.y;
+			//_polyUvsData[10] = 0.0f;
+			//_polyUvsData[11] = 0.0f;
+
+			//_polyUvsData[12] = 0.0f;
+			//_polyUvsData[13] = 0.0f;
+			//_polyUvsData[14] = 0.0f;
+			//_polyUvsData[15] = 0.0f;
+
+			// Set per instance properties
+			_propertyBlock.SetMatrix(_vertexPositionsShaderPropertyId, _polyPositionsData);
+			_propertyBlock.SetMatrix(_vertexNormalsShaderPropertyId, _polyNormalsData);
+			_propertyBlock.SetMatrix(_vertexUvShaderPropertyId, _polyUvsData);
+			
+			_instances[instId].SetPropertyBlock(_propertyBlock);
+		}
+
+		_metamorphoseLevelPrev = _metamorphoseLevel;
+	}
+
+	
+	private Vector4 lerp(Vector4 a, Vector4 b, float t)
+	{
+		_interpolationBuffer.x = a.x + t * (b.x - a.x);
+		_interpolationBuffer.y = a.y + t * (b.y - a.y);
+		_interpolationBuffer.z = a.z + t * (b.z - a.z);
+		_interpolationBuffer.w = a.w + t * (b.w - a.w);
+		return _interpolationBuffer;
+	}
+
+	// TODO: Spawn instances with components on Awake
+	// TODO: Take count of instances from a shared mesh of skined mesh
+	// TODO: Maybe - prebake animated pose to achiev a huge optimization
 	private void spawnPolies()
 	{
-		List<Vector3> verticies = new List<Vector3>();
-		List<Vector3> normals = new List<Vector3>();
-		List<int> triangles = new List<int>();
-		List<Vector2> texCoords = new List<Vector2>();
+		Mesh meshOrigin = getMesh(_origin);
+		int originTrianglesLength = meshOrigin.triangles.Length;
+		_originMeshData = new MeshData(meshOrigin.vertices, meshOrigin.normals, meshOrigin.uv, meshOrigin.triangles);
+		_originPolygons = new Polygon[originTrianglesLength / 3];
 
-		_mesh.GetVertices(verticies);
-		_mesh.GetTriangles(triangles, 0);
-		_mesh.GetNormals(normals);
-		_mesh.GetUVs(0, texCoords);
-
-		MaterialPropertyBlock materialPropertyBlock = new MaterialPropertyBlock();
+		Mesh meshTarget = getMesh(_target);
+		int targetTrianglesLength = meshTarget.triangles.Length;
+		_targetMeshData = new MeshData(meshTarget.vertices, meshTarget.normals, meshTarget.uv, meshTarget.triangles);
+		_targetPolygons = new Polygon[targetTrianglesLength / 3];
 
 		Mesh pMesh = new Mesh
 		{
@@ -52,100 +284,64 @@ public class Metamorphose : MonoBehaviour
 		};
 		pMesh.SetIndices(new[] { 0, 1, 2 }, MeshTopology.Triangles, 0);
 		pMesh.RecalculateNormals();
-
-		for(int t = 0; t < triangles.Count; t += 3)
-		{
-			GameObject p = new GameObject($"triangle_{t}");
-
-			Vector4[] verts =
-			{
-				transform.TransformPoint(verticies[triangles[t]]), 
-				transform.TransformPoint(verticies[triangles[t + 1]]), 
-				transform.TransformPoint(verticies[triangles[t + 2]])
-			};
-
-			Vector4[] norms =
-			{
-				transform.TransformVector(normals[triangles[t]]), 
-				transform.TransformVector(normals[triangles[t + 1]]), 
-				transform.TransformVector(normals[triangles[t + 2]])
-			};
-
-			Vector4[] uvs =
-			{
-				verticies[triangles[t]],
-				verticies[triangles[t + 1]],
-				verticies[triangles[t + 2]]
-			};
-
-
-			//ComputeBuffer vPoses = new ComputeBuffer(verts.Length, sizeof(float) * 3);
-			//vPoses.SetData(verts);
-
-			Transform instance = p.transform;
-			p.AddComponent<MeshFilter>().mesh = pMesh;
-			p.AddComponent<MeshRenderer>().sharedMaterial = _originalInstance.GetComponent<MeshRenderer>().sharedMaterial;
-
-			instance.SetParent(transform);
-
-			Color color = Color.Lerp(new Color(Random.value, Random.value, Random.value), Color.white, 0.7f); // just do it a bit white
-
-
-			// Draw the mesh with instancing.
-
-			materialPropertyBlock.SetMatrix("_VertexPositions", new Matrix4x4(verts[0], verts[1], verts[2], Vector4.zero));
-			materialPropertyBlock.SetMatrix("_VertexNormals", new Matrix4x4(norms[0], norms[1], norms[2], (norms[0] + norms[1] + norms[2]).normalized));
-			materialPropertyBlock.SetMatrix("_VertexUV", new Matrix4x4(uvs[0], uvs[1], uvs[2], Vector4.zero));
-			//vPoses.Release();
-
-			//materialPropertyBlock.SetColor("_Color", color);
-			//materialPropertyBlock.SetFloat("_Metallic", Random.value);
-			//materialPropertyBlock.SetFloat("_Glossiness", Random.value);
-			instance.GetComponent<MeshRenderer>().SetPropertyBlock(materialPropertyBlock);
-		}
-	}
-
-
-	private void spawn()
-	{
-		List<Vector3> verticiesList = new List<Vector3>();
-		_mesh.GetVertices(verticiesList);
-
-		HashSet<Vector3> verticies = new HashSet<Vector3>(verticiesList);
 		
-		Debug.Log(verticies.Count);
-
-		MaterialPropertyBlock materialPropertyBlock = new MaterialPropertyBlock();
-
-		foreach (Vector3 v in verticies)
+		for(int t = 0, instId = 0; t < Mathf.Max(originTrianglesLength, targetTrianglesLength); t += 3, instId++)
 		{
-			Transform instance = Instantiate(_originalInstance);
+			GameObject p = new GameObject(); //$"triangle_{instId}"
+
+			Transform instance = p.transform;//Instantiate(_instanceOriginal).transform;
+			p.AddComponent<MeshFilter>().mesh = pMesh;
+			p.AddComponent<MeshRenderer>().sharedMaterial = _material;
+			//instance.GetComponent<MeshFilter>().mesh = pMesh;
+			//instance.GetComponent<MeshRenderer>().sharedMaterial = _material;
+
 			instance.SetParent(transform);
-			instance.localScale = Vector3.one * _instanceScale;
-			instance.localPosition = v;
 
-			Color color = Color.Lerp(new Color(Random.value, Random.value, Random.value), Color.white, 0.7f); // just do it a bit white
+			if (t < originTrianglesLength)
+			{
+				_originPolygons[instId] = new Polygon(new Vector4[3], new Vector4[4], new Vector4[3], _origin.localToWorldMatrix);
+				_originPolygons[instId].calcWorldVerticies(_originMeshData, t, t + 1, t + 2);
+				_originPolygons[instId].calcWorldNormals(_originMeshData, t, t + 1, t + 2);
+				_originPolygons[instId].calcUVs(_originMeshData, t, t + 1, t + 2);
+			}
 
-			materialPropertyBlock.SetColor("_Color", color);
-			//materialPropertyBlock.SetFloat("_Metallic", Random.value);
-			//materialPropertyBlock.SetFloat("_Glossiness", Random.value);
-			instance.GetComponent<MeshRenderer>().SetPropertyBlock(materialPropertyBlock);
+			if (t < targetTrianglesLength)
+			{
+				_targetPolygons[instId] = new Polygon(new Vector4[3], new Vector4[4], new Vector4[3], _target.localToWorldMatrix);
+				_targetPolygons[instId].calcWorldVerticies(_targetMeshData, t, t + 1, t + 2);
+				_targetPolygons[instId].calcWorldNormals(_targetMeshData, t, t + 1, t + 2);
+				_targetPolygons[instId].calcUVs(_targetMeshData, t, t + 1, t + 2);
+			}
 
-			instance.GetComponent<Rigidbody>().isKinematic = true;
+			_propertyBlock.SetMatrix(_vertexPositionsShaderPropertyId, _polyPositionsData);
+			_propertyBlock.SetMatrix(_vertexNormalsShaderPropertyId, _polyNormalsData);
+			_propertyBlock.SetMatrix(_vertexUvShaderPropertyId, _polyUvsData);
+			
+			MeshRenderer meshRenderer = instance.GetComponent<MeshRenderer>();
+			meshRenderer.SetPropertyBlock(_propertyBlock);
+
+			_instances.Add(meshRenderer);
 		}
-
-		StartCoroutine(runPhysicsLate());
 	}
 
-
-	private IEnumerator runPhysicsLate()
+	private Mesh getMesh(Transform tran)
 	{
-		yield return new WaitForSeconds(_physicsTimeDelay);
-
-		foreach (Transform child in transform)
+		MeshFilter meshFilter = tran.GetComponent<MeshFilter>();
+		if (meshFilter == null)
 		{
-			child.GetComponent<Rigidbody>().isKinematic = false;
+			SkinnedMeshRenderer skinnedMeshRenderer = tran.GetComponent<SkinnedMeshRenderer>();
+			if (skinnedMeshRenderer != null)
+			{
+				Mesh mesh = new Mesh();
+				skinnedMeshRenderer.BakeMesh(mesh);
+				return mesh;
+			}
+
+			Debug.LogError("One of transform's gameobjects does't have a Mesh");
+			return null;
 		}
+
+		return meshFilter.mesh;
 	}
 
 

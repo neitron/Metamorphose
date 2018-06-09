@@ -6,9 +6,12 @@ Shader "CS/GpuInstancing"
 	Properties 
 	{
 		_Color ("Color", Color) = (1,1,1,1)
+		_ColorBack ("Color Back", Color) = (1,1,1,1)
 		_MainTex ("Albedo (RGB)", 2D) = "white" {}
 		_Glossiness ("Smoothness", Range(0,1)) = 0.5
-		_Metallic ("Metallic", Range(0,1)) = 0.0
+		_Metallic ("Metallic", Range(0.0, 1.0)) = 0.0
+
+		_HullOffset ("Hull Offset", Range(0, 0.5)) = 0.0
 	}
 
 	SubShader 
@@ -45,9 +48,11 @@ Shader "CS/GpuInstancing"
 
 
 			sampler2D _MainTex;
-			
+			fixed4 _ColorBack;
+
 			struct Input 
 			{
+				fixed facing:VFACE;
 				float2 uv_MainTex;
 			};
 
@@ -60,6 +65,11 @@ Shader "CS/GpuInstancing"
 				UNITY_DEFINE_INSTANCED_PROP(float4x4, _VertexUV)
 			UNITY_INSTANCING_BUFFER_END(Props)
 
+
+			float _HullOffset;
+			float _MetamorphoseLevel;
+			static const float PI = 3.14159265359f;
+
 			void vert(inout appdata v)
 			{
 				float4x4 poses = UNITY_ACCESS_INSTANCED_PROP(Props, _VertexPositions);
@@ -68,7 +78,11 @@ Shader "CS/GpuInstancing"
 				float4x4 norms = UNITY_ACCESS_INSTANCED_PROP(Props, _VertexNormals);
 				v.normal.xyz = float3 ( norms[0][v.vid], norms[1][v.vid], norms[2][v.vid] );
 
-				v.vertex.xyz = v.vertex.xyz + 0.01 * v.normal.xyz + ( saturate( sin(_Time.z + v.vertex.y) * 0.5 ) ) * float3 ( norms[0][3], norms[1][3], norms[2][3] );
+				v.vertex.xyz = 
+					v.vertex.xyz + 
+					_HullOffset * v.normal.xyz + 
+					sin(_MetamorphoseLevel * PI) * float3 ( norms[0][3], norms[1][3], norms[2][3] ) + 
+					_MetamorphoseLevel * saturate(sin(_Time.w + v.vertex.y) * 0.5) * float3 ( norms[0][3], norms[1][3], norms[2][3] );
 			
 				float4x4 uvs = UNITY_ACCESS_INSTANCED_PROP(Props, _VertexUV);
 				v.texcoord.xy =  float2 ( uvs[0][v.vid], uvs[1][v.vid] );
@@ -77,7 +91,8 @@ Shader "CS/GpuInstancing"
 
 			void surf (Input IN, inout SurfaceOutputStandard o)
 			{
-				fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * UNITY_ACCESS_INSTANCED_PROP(Props, _Color);
+				fixed4 colorFront = UNITY_ACCESS_INSTANCED_PROP(Props, _Color);
+				fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * lerp(_ColorBack, colorFront, IN.facing);
 				o.Albedo = c.rgb;
 				
 				o.Metallic = UNITY_ACCESS_INSTANCED_PROP(Props, _Metallic);;
