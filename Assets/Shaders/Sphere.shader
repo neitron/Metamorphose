@@ -6,11 +6,11 @@ Shader "CS/GpuInstancing"
 	Properties 
 	{
 		_Color ("Color", Color) = (1,1,1,1)
-		_ColorBack ("Color Back", Color) = (1,1,1,1)
+		[HDR]_ColorBack ("Color Back", Color) = (1,1,1,1)
 		_MainTex ("Albedo (RGB)", 2D) = "white" {}
 		_Glossiness ("Smoothness", Range(0,1)) = 0.5
 		_Metallic ("Metallic", Range(0.0, 1.0)) = 0.0
-
+		
 		_HullOffset ("Hull Offset", Range(0, 0.5)) = 0.0
 	}
 
@@ -94,9 +94,9 @@ Shader "CS/GpuInstancing"
 				fixed4 colorFront = UNITY_ACCESS_INSTANCED_PROP(Props, _Color);
 				fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * lerp(_ColorBack, colorFront, IN.facing);
 				o.Albedo = c.rgb;
-				
-				o.Metallic = UNITY_ACCESS_INSTANCED_PROP(Props, _Metallic);;
-				o.Smoothness = UNITY_ACCESS_INSTANCED_PROP(Props, _Glossiness);;
+				o.Emission = ( 1 - IN.facing ) * lerp(_ColorBack, colorFront, IN.facing);
+				o.Metallic = UNITY_ACCESS_INSTANCED_PROP(Props, _Metallic);
+				o.Smoothness = UNITY_ACCESS_INSTANCED_PROP(Props, _Glossiness);
 				o.Alpha = c.a;
 			}
 		

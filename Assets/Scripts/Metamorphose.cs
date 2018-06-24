@@ -89,7 +89,7 @@ public class Metamorphose : MonoBehaviour
 
 	[SerializeField] private Transform _origin;
 	[SerializeField] private Transform _target;
-	//[SerializeField] private Transform _instanceOriginal;
+	[SerializeField] private Transform _parent;
 	[SerializeField] private Material _material;
 	[SerializeField, Range(0.0f, 1.0f)] private float _metamorphoseLevel;
 
@@ -116,15 +116,22 @@ public class Metamorphose : MonoBehaviour
 	private float _metamorphoseLevelPrev;
 	private Vector4 _interpolationBuffer;
 
-	#endregion
+    #endregion
 
 
 
-	private void Start () 
+    private void Awake()
+    {
+        _propertyBlock = new MaterialPropertyBlock();
+        _instances = new List<MeshRenderer>();
+
+        Debug.Log("Awake");
+        spawnInstances();
+    }
+
+
+    private void Start () 
 	{
-		_propertyBlock = new MaterialPropertyBlock();
-		_instances = new List<MeshRenderer>();
-
 		_vertexPositionsShaderPropertyId = Shader.PropertyToID("_VertexPositions");
 		_vertexNormalsShaderPropertyId = Shader.PropertyToID("_VertexNormals");
 		_vertexUvShaderPropertyId = Shader.PropertyToID("_VertexUV");
@@ -132,7 +139,8 @@ public class Metamorphose : MonoBehaviour
 
 		_metamorphoseLevelPrev = _metamorphoseLevel + 0.1f;
 
-		spawnPolies();
+	    Debug.Log("Start");
+        spawnPolies();
 	}
 
 
@@ -151,36 +159,37 @@ public class Metamorphose : MonoBehaviour
 
 		_material.SetFloat(_metamorphoseLevelShaderPropertyId, _metamorphoseLevel);
 
-		for (int instId = 0; instId < _instances.Count; instId++)
+	    for (int instId = 0; instId < _instances.Count; instId++)
 		{
 			//_originPolygons[instId % _originPolygons.Length].localToWorld = _origin.localToWorldMatrix;
 			//_targetPolygons[instId % _targetPolygons.Length].localToWorld = _target.localToWorldMatrix;
+
 			// Set Position data
 			Vector4[] buffer0 = _originPolygons[instId % _originPolygons.Length].vertices;
-			Vector4[] buffer1 = _targetPolygons[instId % _targetPolygons.Length].vertices;
+            Vector4[] buffer1 = _targetPolygons[instId % _targetPolygons.Length].vertices;
 			
 			Vector4 v = lerp(buffer0[0], buffer1[0], _metamorphoseLevel);
 			_polyPositionsData.m00 = v.x;
 			_polyPositionsData.m10 = v.y;
 			_polyPositionsData.m20 = v.z;
-			//_polyPositionsData[3] = 0.0f;
+			//_polyPositionsData.m30 = 0.0f;
 
 			v = lerp(buffer0[1], buffer1[1], _metamorphoseLevel);
 			_polyPositionsData.m01 = v.x;
 			_polyPositionsData.m11 = v.y;
 			_polyPositionsData.m21 = v.z;
-			//_polyPositionsData[7] = 0.0f;
+			//_polyPositionsData.m31 = 0.0f;
 
 			v = lerp(buffer0[2], buffer1[2], _metamorphoseLevel);
 			_polyPositionsData.m02 = v.x;
 			_polyPositionsData.m12 = v.y;
 			_polyPositionsData.m22 = v.z;
-			//_polyPositionsData[11] = 0.0f;
+			//_polyPositionsData.m32 = 0.0f;
 
-			//_polyPositionsData[12] = 0.0f;
-			//_polyPositionsData[13] = 0.0f;
-			//_polyPositionsData[14] = 0.0f;
-			//_polyPositionsData[15] = 0.0f;
+			//_polyPositionsData.m03 = 0.0f;
+			//_polyPositionsData.m13 = 0.0f;
+			//_polyPositionsData.m23 = 0.0f;
+			//_polyPositionsData.m33 = 0.0f;
 
 			// Set normals data
 			buffer0 = _originPolygons[instId % _originPolygons.Length].normals;
@@ -258,45 +267,58 @@ public class Metamorphose : MonoBehaviour
 		return _interpolationBuffer;
 	}
 
-	// TODO: Spawn instances with components on Awake
-	// TODO: Take count of instances from a shared mesh of skined mesh
+
+    private void spawnInstances()
+    {
+        Mesh meshOrigin = getMesh(_origin);
+        int originTrianglesLength = meshOrigin.triangles.Length;
+
+        Mesh meshTarget = getMesh(_target);
+        int targetTrianglesLength = meshTarget.triangles.Length;
+
+        Mesh pMesh = new Mesh
+        {
+            vertices = new[]
+            {
+                Vector3.zero,
+                Vector3.up,
+                Vector3.left
+            }
+        };
+        pMesh.SetIndices(new[] { 0, 1, 2 }, MeshTopology.Triangles, 0);
+        pMesh.RecalculateNormals();
+
+        for (int t = 0; t < Mathf.Max(originTrianglesLength, targetTrianglesLength); t += 3)
+        {
+            GameObject p = new GameObject();
+
+            Transform instance = p.transform;
+            p.AddComponent<MeshFilter>().mesh = pMesh;
+            p.AddComponent<MeshRenderer>().sharedMaterial = _material;
+
+            instance.SetParent(_parent);
+
+            MeshRenderer meshRenderer = instance.GetComponent<MeshRenderer>();
+            _instances.Add(meshRenderer);
+        }
+    }
+
+    
 	// TODO: Maybe - prebake animated pose to achiev a huge optimization
 	private void spawnPolies()
 	{
-		Mesh meshOrigin = getMesh(_origin);
+		Mesh meshOrigin = getMesh(_origin, true);
 		int originTrianglesLength = meshOrigin.triangles.Length;
 		_originMeshData = new MeshData(meshOrigin.vertices, meshOrigin.normals, meshOrigin.uv, meshOrigin.triangles);
 		_originPolygons = new Polygon[originTrianglesLength / 3];
 
-		Mesh meshTarget = getMesh(_target);
+		Mesh meshTarget = getMesh(_target, true);
 		int targetTrianglesLength = meshTarget.triangles.Length;
 		_targetMeshData = new MeshData(meshTarget.vertices, meshTarget.normals, meshTarget.uv, meshTarget.triangles);
 		_targetPolygons = new Polygon[targetTrianglesLength / 3];
-
-		Mesh pMesh = new Mesh
-		{
-			vertices = new []
-			{
-				Vector3.zero,
-				Vector3.up, 
-				Vector3.left
-			}
-		};
-		pMesh.SetIndices(new[] { 0, 1, 2 }, MeshTopology.Triangles, 0);
-		pMesh.RecalculateNormals();
-		
+        
 		for(int t = 0, instId = 0; t < Mathf.Max(originTrianglesLength, targetTrianglesLength); t += 3, instId++)
 		{
-			GameObject p = new GameObject(); //$"triangle_{instId}"
-
-			Transform instance = p.transform;//Instantiate(_instanceOriginal).transform;
-			p.AddComponent<MeshFilter>().mesh = pMesh;
-			p.AddComponent<MeshRenderer>().sharedMaterial = _material;
-			//instance.GetComponent<MeshFilter>().mesh = pMesh;
-			//instance.GetComponent<MeshRenderer>().sharedMaterial = _material;
-
-			instance.SetParent(transform);
-
 			if (t < originTrianglesLength)
 			{
 				_originPolygons[instId] = new Polygon(new Vector4[3], new Vector4[4], new Vector4[3], _origin.localToWorldMatrix);
@@ -317,31 +339,37 @@ public class Metamorphose : MonoBehaviour
 			_propertyBlock.SetMatrix(_vertexNormalsShaderPropertyId, _polyNormalsData);
 			_propertyBlock.SetMatrix(_vertexUvShaderPropertyId, _polyUvsData);
 			
-			MeshRenderer meshRenderer = instance.GetComponent<MeshRenderer>();
-			meshRenderer.SetPropertyBlock(_propertyBlock);
-
-			_instances.Add(meshRenderer);
+		    _instances[instId].SetPropertyBlock(_propertyBlock);
 		}
 	}
 
-	private Mesh getMesh(Transform tran)
+
+	private Mesh getMesh(Transform tran, bool isBakeMesh = false)
 	{
 		MeshFilter meshFilter = tran.GetComponent<MeshFilter>();
-		if (meshFilter == null)
-		{
-			SkinnedMeshRenderer skinnedMeshRenderer = tran.GetComponent<SkinnedMeshRenderer>();
-			if (skinnedMeshRenderer != null)
-			{
-				Mesh mesh = new Mesh();
-				skinnedMeshRenderer.BakeMesh(mesh);
-				return mesh;
-			}
 
-			Debug.LogError("One of transform's gameobjects does't have a Mesh");
-			return null;
-		}
+	    if (meshFilter != null)
+	    {
+	        return meshFilter.mesh;
+	    }
 
-		return meshFilter.mesh;
+	    SkinnedMeshRenderer skinnedMeshRenderer = tran.GetComponent<SkinnedMeshRenderer>();
+        
+	    if (skinnedMeshRenderer != null)
+	    {
+	        if (!isBakeMesh)
+	        {
+	            return skinnedMeshRenderer.sharedMesh;
+	        }
+
+	        Mesh mesh = new Mesh();
+	        skinnedMeshRenderer.BakeMesh(mesh);
+	        return mesh;
+	    }
+
+	    Debug.LogError("One of transform's gameobjects does't have a Mesh");
+
+	    return null;
 	}
 
 
